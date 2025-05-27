@@ -5,58 +5,56 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="BTC Price Predictor", layout="centered")
+st.set_page_config(page_title="BTC Price Prediction", layout="centered")
 st.title("Bitcoin Price Prediction")
 
+API_KEY = "adb2e003-6773-4184-94f4-6578bae25354"
+
 @st.cache_data
-def fetch_btc_data():
-    url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+def fetch_btc_history():
+    url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/ohlcv/historical"
+    headers = {"X-CMC_PRO_API_KEY": API_KEY}
     params = {
-        "vs_currency": "usd",
-        "days": "1",
-        "interval": "hourly"
+        "symbol": "BTC",
+        "convert": "USD",
+        "time_period": "hourly",
+        "interval": "hourly",
+        "count": 24
     }
+    r = requests.get(url, headers=headers, params=params)
+    data = r.json()
 
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        prices = data.get("prices")
+    if "data" not in data or "quotes" not in data["data"]:
+        raise ValueError("Failed to fetch data.")
 
-        if not prices:
-            raise ValueError("No 'prices' data found in API response.")
+    quotes = data["data"]["quotes"]
+    df = pd.DataFrame(quotes)
+    df["price"] = df["quote"].apply(lambda x: x["USD"]["close"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df.set_index("timestamp", inplace=True)
+    return df[["price"]]
 
-        df = pd.DataFrame(prices, columns=["timestamp", "price"])
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df.set_index("timestamp", inplace=True)
-        return df
-    except requests.exceptions.HTTPError as err:
-        st.error(f"HTTP Error: {err}")
-        return None
-    except Exception as e:
-        st.error(f"Error fetching data: {e}")
-        return None
-
-def predict_price(df):
+def predict_next_price(df):
     df = df.copy()
-    df["time"] = np.arange(len(df))
+    df["t"] = np.arange(len(df))
     model = LinearRegression()
-    model.fit(df[["time"]], df["price"])
-    future_time = [[len(df) + 3]]
-    prediction = model.predict(future_time)
-    return prediction[0]
+    model.fit(df[["t"]], df["price"])
+    next_t = [[len(df) + 3]]
+    pred = model.predict(next_t)
+    return pred[0]
 
-def plot_prices(df):
-    fig, ax = plt.subplots(figsize=(10, 4))
-    df["price"].plot(ax=ax, title="BTC Price (Last 24 Hours)")
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Price (USD)")
-    ax.grid(True)
+try:
+    df = fetch_btc_history()
+    prediction = predict_next_price(df)
+
+    st.subheader("Predicted price after 3 hours:")
+    st.success(f"${prediction:,.2f}")
+
+    st.subheader("Price chart:")
+    fig, ax = plt.subplots()
+    df["price"].plot(ax=ax, title="BTC Price (Last 24 hours)")
+    ax.set_ylabel("USD")
     st.pyplot(fig)
 
-df = fetch_btc_data()
-
-if df is not None:
-    prediction = predict_price(df)
-    st.subheader(f"Predicted Price After 3 Hours: ${prediction:,.2f}")
-    plot_prices(df)
+except Exception as e:
+    st.error(f"Error: {e}")
